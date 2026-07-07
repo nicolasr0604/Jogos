@@ -1,0 +1,2201 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>waves</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #20243a 0%, #0b0d14 55%, #05060a 100%);
+      color: white;
+      font-family: Arial, Helvetica, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    #moldura {
+      padding: 14px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.05);
+      box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+      border-radius: 18px;
+    }
+
+    canvas {
+      display: block;
+      background: #05070d;
+      border: 2px solid rgba(255,255,255,0.75);
+      border-radius: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="moldura">
+    <canvas id="jogo" width="1100" height="680"></canvas>
+  </div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("jogo");
+const ctx = canvas.getContext("2d");
+
+// =====================================================
+// CONFIGURAÇÕES BASE
+// =====================================================
+const ALTURA_CHAO = 16;
+const CHAO_Y = canvas.height - ALTURA_CHAO;
+
+const GRAVIDADE_BASE = 1200;
+const VELOCIDADE_PLAYER_BASE = 320;
+const FORCA_PULO_BASE = 650;
+const COOLDOWN_ATAQUE_BASE = 0.180;
+const DURACAO_ATAQUE_BASE = 0.130;
+const LARGURA_ATAQUE_BASE = 45;
+const ALTURA_ATAQUE_BASE = 48;
+const DISTANCIA_ATAQUE_BASE = 18;
+const VIDA_PLAYER_BASE = 5;
+
+const MULT_POWER = 1.15;
+const LIMITE_POWER = 5;
+
+const TEMPO_COMBO = 1.30;
+const MULT_COMBO = 1.5;
+
+const MAX_PARTICULAS = 260;
+const IMPULSO_POGO = 520;
+
+// =====================================================
+// ESTADO GERAL
+// =====================================================
+let tela = "titulo";
+// titulo, ajuda, entreOndas, jogando, powerup, gameover, vitoria
+
+let botoes = [];
+let tempoTotal = 0;
+let ultimoTempo = 0;
+
+let ondaAtual = 0;
+let ondaAtiva = false;
+let inimigosParaNascer = 0;
+let inimigosTotaisOnda = 0;
+let tempoSpawn = 0;
+
+let pontos = 0;
+let mortes = 0;
+let proximoIdInimigo = 1;
+
+let particulas = [];
+let inimigos = [];
+let projeteisChefe = [];
+
+let contadorCombo = 0;
+let tempoResetCombo = 0;
+
+let shakeTela = 0;
+
+// =====================================================
+// PLAYER
+// =====================================================
+const player = {
+  x: 140,
+  y: CHAO_Y - 48,
+  largura: 48,
+  altura: 48,
+  velY: 0,
+  noChao: true,
+  olhando: 1,
+  cooldownAtaque: 0,
+  invulneravel: 0,
+  vida: VIDA_PLAYER_BASE,
+  vidaMaxima: VIDA_PLAYER_BASE
+};
+
+let ataque = {
+  ativo: false,
+  x: 0,
+  y: 0,
+  largura: 0,
+  altura: 0,
+  tempo: 0,
+  direcao: 1,
+  vertical: 0,
+  especial: false,
+  dano: 1,
+  atingidos: new Set()
+};
+
+// =====================================================
+// POWER-UPS
+// =====================================================
+const powerLevels = {
+  cadencia: 0,
+  ataqueMaior: 0,
+  dano: 0,
+  velocidade: 0,
+  pulo: 0,
+  vidaMaxima: 0,
+  leveza: 0,
+  monstrosLentos: 0,
+  monstrosFrageis: 0,
+  spawnLento: 0,
+  menosMonstros: 0,
+  monstrosMenores: 0
+};
+
+const POWERUPS = [
+  {
+    id: "cadencia",
+    nome: "Mãos Rápidas",
+    subtitulo: "Cadência de ataque",
+    desc: "Reduz o tempo entre ataques em 1.15x."
+  },
+  {
+    id: "ataqueMaior",
+    nome: "Lâmina Azul",
+    subtitulo: "Ataque maior",
+    desc: "Aumenta largura e altura do ataque em 1.15x."
+  },
+  {
+    id: "dano",
+    nome: "Punho Pesado",
+    subtitulo: "Mais dano",
+    desc: "Aumenta o dano do ataque em 1.15x."
+  },
+  {
+    id: "velocidade",
+    nome: "Passo Vermelho",
+    subtitulo: "Mais velocidade",
+    desc: "Aumenta a velocidade do player em 1.15x."
+  },
+  {
+    id: "pulo",
+    nome: "Mola Interna",
+    subtitulo: "Pulo mais alto",
+    desc: "Aumenta a força do pulo em 1.15x."
+  },
+  {
+    id: "vidaMaxima",
+    nome: "Núcleo Forte",
+    subtitulo: "Mais vida",
+    desc: "Aumenta a vida máxima em 1.15x e cura você."
+  },
+  {
+    id: "leveza",
+    nome: "Gravidade Leve",
+    subtitulo: "Menos gravidade",
+    desc: "Reduz a gravidade aplicada ao player em 1.15x."
+  },
+  {
+    id: "monstrosLentos",
+    nome: "Chão Pesado",
+    subtitulo: "Monstros mais lentos",
+    desc: "Reduz a velocidade dos inimigos em 1.15x."
+  },
+  {
+    id: "monstrosFrageis",
+    nome: "Casca Frágil",
+    subtitulo: "Monstros com menos vida",
+    desc: "Reduz a vida dos monstros em 1.15x."
+  },
+  {
+    id: "spawnLento",
+    nome: "Fôlego da Arena",
+    subtitulo: "Spawn mais lento",
+    desc: "Aumenta o intervalo de nascimento dos inimigos em 1.15x."
+  },
+  {
+    id: "menosMonstros",
+    nome: "Onda Menor",
+    subtitulo: "Menos inimigos",
+    desc: "Reduz a quantidade total de inimigos da onda em 1.15x."
+  },
+  {
+    id: "monstrosMenores",
+    nome: "Encolhimento",
+    subtitulo: "Monstros menores",
+    desc: "Reduz o tamanho dos inimigos em 1.15x."
+  }
+];
+
+let escolhasPowerup = [];
+
+function mult(id) {
+  return Math.pow(MULT_POWER, powerLevels[id] || 0);
+}
+
+function velPlayer() {
+  return VELOCIDADE_PLAYER_BASE * mult("velocidade");
+}
+
+function gravidadePlayer() {
+  return GRAVIDADE_BASE / mult("leveza");
+}
+
+function forcaPulo() {
+  return FORCA_PULO_BASE * mult("pulo");
+}
+
+function cooldownAtaque() {
+  return COOLDOWN_ATAQUE_BASE / mult("cadencia");
+}
+
+function danoAtaque() {
+  return mult("dano");
+}
+
+function vidaMaximaPlayer() {
+  return Math.max(1, Math.round(VIDA_PLAYER_BASE * mult("vidaMaxima")));
+}
+
+function larguraAtaque() {
+  return LARGURA_ATAQUE_BASE * mult("ataqueMaior");
+}
+
+function alturaAtaque() {
+  return ALTURA_ATAQUE_BASE * mult("ataqueMaior");
+}
+
+function duracaoAtaque() {
+  return DURACAO_ATAQUE_BASE;
+}
+
+function distanciaAtaque() {
+  return DISTANCIA_ATAQUE_BASE;
+}
+
+function velocidadeMaximaInimigo() {
+  return velPlayer() * 1.5;
+}
+
+// =====================================================
+// INIMIGOS
+// =====================================================
+const TIPOS_INIMIGO = {
+  normal: {
+    nome: "Andarilho",
+    cor: "#53f76b",
+    cor2: "#209c36",
+    vida: 1,
+    tamanho: 40,
+    velocidade: 1.00,
+    pontos: 1,
+    peso: 38,
+    desbloqueio: 1
+  },
+  rapido: {
+    nome: "Corredor",
+    cor: "#8aff63",
+    cor2: "#39c842",
+    vida: 1,
+    tamanho: 32,
+    velocidade: 1.45,
+    pontos: 2,
+    peso: 24,
+    desbloqueio: 1
+  },
+  pulador: {
+    nome: "Saltador",
+    cor: "#55ff88",
+    cor2: "#1ea84a",
+    vida: 1,
+    tamanho: 38,
+    velocidade: 1.08,
+    pontos: 2,
+    peso: 22,
+    desbloqueio: 2,
+    pula: true
+  },
+  voador: {
+    nome: "Voador",
+    cor: "#80ff7a",
+    cor2: "#20aa40",
+    vida: 1,
+    tamanho: 34,
+    velocidade: 1.10,
+    pontos: 3,
+    peso: 24,
+    desbloqueio: 3,
+    voa: true
+  },
+  voadorRapido: {
+    nome: "Ferrão",
+    cor: "#b5ff5c",
+    cor2: "#4aaa22",
+    vida: 1,
+    tamanho: 28,
+    velocidade: 1.55,
+    pontos: 4,
+    peso: 12,
+    desbloqueio: 6,
+    voa: true,
+    investe: true
+  },
+  tanque: {
+    nome: "Tanque",
+    cor: "#3ee85d",
+    cor2: "#147327",
+    vida: 3,
+    tamanho: 48,
+    velocidade: 0.82,
+    pontos: 4,
+    peso: 17,
+    desbloqueio: 2
+  },
+  blindado: {
+    nome: "Blindado",
+    cor: "#6cff7b",
+    cor2: "#137b28",
+    vida: 4,
+    tamanho: 44,
+    velocidade: 0.90,
+    pontos: 5,
+    peso: 12,
+    desbloqueio: 3,
+    blindado: true
+  },
+  divisor: {
+    nome: "Divisor",
+    cor: "#79ff57",
+    cor2: "#27a820",
+    vida: 2,
+    tamanho: 46,
+    velocidade: 0.98,
+    pontos: 4,
+    peso: 13,
+    desbloqueio: 3,
+    divide: true
+  },
+  carregador: {
+    nome: "Investidor",
+    cor: "#46ffa0",
+    cor2: "#128459",
+    vida: 2,
+    tamanho: 42,
+    velocidade: 0.90,
+    pontos: 5,
+    peso: 11,
+    desbloqueio: 4,
+    investe: true
+  },
+  gigante: {
+    nome: "Gigante",
+    cor: "#37dc4e",
+    cor2: "#095d19",
+    vida: 6,
+    tamanho: 76,
+    velocidade: 0.60,
+    pontos: 8,
+    peso: 8,
+    desbloqueio: 4
+  },
+  gigantePulador: {
+    nome: "Gigante Saltador",
+    cor: "#34e776",
+    cor2: "#096c30",
+    vida: 5,
+    tamanho: 72,
+    velocidade: 0.68,
+    pontos: 9,
+    peso: 6,
+    desbloqueio: 5,
+    pula: true,
+    saltoPesado: true
+  },
+  colosso: {
+    nome: "Colosso",
+    cor: "#2cc244",
+    cor2: "#064c14",
+    vida: 22,
+    tamanho: 108,
+    velocidade: 0.56,
+    pontos: 22,
+    peso: 0,
+    desbloqueio: 5,
+    boss: true,
+    pula: true,
+    saltoPesado: true
+  },
+  chefeRoxo25: {
+    nome: "Núcleo Roxo",
+    cor: "#b35cff",
+    cor2: "#45106f",
+    vida: 68,
+    tamanho: 116,
+    velocidade: 0.70,
+    pontos: 120,
+    peso: 0,
+    desbloqueio: 25,
+    boss: true,
+    bossRoxo: true,
+    pula: true,
+    saltoPesado: true
+  },
+  chefeFinal50: {
+    nome: "Coração do Abismo",
+    cor: "#ff4dff",
+    cor2: "#180029",
+    vida: 115,
+    tamanho: 132,
+    velocidade: 0.78,
+    pontos: 300,
+    peso: 0,
+    desbloqueio: 50,
+    boss: true,
+    finalBoss: true,
+    pula: true,
+    saltoPesado: true
+  },
+  mini: {
+    nome: "Mini",
+    cor: "#a2ff6a",
+    cor2: "#46c934",
+    vida: 1,
+    tamanho: 24,
+    velocidade: 1.55,
+    pontos: 1,
+    peso: 0,
+    desbloqueio: 1
+  }
+};
+
+function dificuldadeOnda() {
+  return 1 + Math.min(ondaAtual * 0.055, 1.35);
+}
+
+function ondaDeChefe(numero = ondaAtual) {
+  return numero > 0 && numero % 5 === 0;
+}
+
+function ondaFinal(numero = ondaAtual) {
+  return numero === 50;
+}
+
+function ondaRoxa(numero = ondaAtual) {
+  return numero === 25;
+}
+
+function quantidadeInimigosDaOnda() {
+  if (ondaDeChefe(ondaAtual)) return 1;
+
+  const base = 7 + ondaAtual * 3;
+  return Math.max(3, Math.round(base / mult("menosMonstros")));
+}
+
+function intervaloSpawnOnda() {
+  if (ondaDeChefe()) return 250;
+
+  const base = Math.max(330, 1000 - ondaAtual * 35);
+  return base * mult("spawnLento");
+}
+
+function tamanhoInimigoBase(tipo) {
+  const def = TIPOS_INIMIGO[tipo];
+
+  if (def.boss) {
+    return def.tamanho;
+  }
+
+  const escalaOnda = tipo === "mini" ? 1 : 1 + Math.min(ondaAtual * 0.008, 0.20);
+  return Math.max(16, def.tamanho * escalaOnda / mult("monstrosMenores"));
+}
+
+function vidaInimigoBase(tipo) {
+  const def = TIPOS_INIMIGO[tipo];
+  if (tipo === "mini") return 1;
+
+  if (def.boss) {
+    const escalaBoss = def.finalBoss ? 1 : def.bossRoxo ? 1 : 1 + ondaAtual * 0.12;
+    return Math.max(1, Math.ceil(def.vida * escalaBoss));
+  }
+
+  const escalaOnda = 1 + ondaAtual * 0.035;
+  return Math.max(1, Math.ceil((def.vida * escalaOnda) / mult("monstrosFrageis")));
+}
+
+function escolherTipoInimigo() {
+  if (ondaFinal()) {
+    return "chefeFinal50";
+  }
+
+  if (ondaRoxa()) {
+    return "chefeRoxo25";
+  }
+
+  if (ondaDeChefe()) {
+    return "colosso";
+  }
+
+  const disponiveis = Object.keys(TIPOS_INIMIGO)
+    .filter(tipo => !["mini", "colosso", "chefeRoxo25", "chefeFinal50"].includes(tipo))
+    .filter(tipo => TIPOS_INIMIGO[tipo].desbloqueio <= ondaAtual);
+
+  let soma = 0;
+  for (const tipo of disponiveis) {
+    soma += TIPOS_INIMIGO[tipo].peso;
+  }
+
+  let r = Math.random() * soma;
+  for (const tipo of disponiveis) {
+    r -= TIPOS_INIMIGO[tipo].peso;
+    if (r <= 0) return tipo;
+  }
+
+  return "normal";
+}
+
+function velocidadeInimigo(tipo) {
+  const def = TIPOS_INIMIGO[tipo];
+  const variacao = 0.78 + Math.random() * 0.72;
+  let v = 130 * def.velocidade * variacao * dificuldadeOnda();
+
+  if (!def.boss) {
+    v = v / mult("monstrosLentos");
+  } else {
+    v = 130 * def.velocidade * (0.95 + Math.random() * 0.25);
+  }
+
+  return Math.min(v, velocidadeMaximaInimigo());
+}
+
+function criarInimigo(tipo = null, x = null, y = null, direcao = null) {
+  if (!tipo) tipo = escolherTipoInimigo();
+
+  const def = TIPOS_INIMIGO[tipo];
+  const tamanho = Math.round(tamanhoInimigoBase(tipo));
+  const vida = vidaInimigoBase(tipo);
+
+  const lado = Math.random() < 0.5 ? -1 : 1;
+
+  const inimigo = {
+    id: proximoIdInimigo++,
+    tipo,
+    nome: def.nome,
+    x: x !== null ? x : (lado === -1 ? -tamanho - 12 : canvas.width + tamanho + 12),
+    y: y !== null ? y : (def.voa ? 130 + Math.random() * Math.max(80, CHAO_Y - 330) : CHAO_Y - tamanho),
+    largura: tamanho,
+    altura: tamanho,
+    direcao: direcao !== null ? direcao : (lado === -1 ? 1 : -1),
+    velocidade: velocidadeInimigo(tipo),
+    vida,
+    vidaMaxima: vida,
+    pontos: def.pontos,
+    velY: 0,
+    noChao: true,
+    tempoPulo: 0.45 + Math.random() * 1.25,
+    tempoInvestida: 1.0 + Math.random() * 1.7,
+    tempoTiro: def.boss ? 0.8 : 999,
+    tempoTeleporte: def.finalBoss || def.bossRoxo ? 2.8 : 999,
+    tempoInvocar: def.boss ? 3.8 : 999,
+    tempoSlam: def.boss ? 1.6 : 999,
+    investindo: 0,
+    piscando: 0
+  };
+
+  inimigos.push(inimigo);
+}
+
+// =====================================================
+// CONTROLES
+// =====================================================
+const teclas = {
+  esquerda: false,
+  direita: false,
+  baixo: false,
+  pulo: false
+};
+
+document.addEventListener("keydown", (e) => {
+  const k = e.key;
+
+  if (["a","A","d","D","s","S","w","W","ArrowLeft","ArrowRight","ArrowDown","ArrowUp"," "].includes(k)) {
+    e.preventDefault();
+  }
+
+  if (tela === "titulo" && k === "Enter") {
+    abrirEntreOndas();
+    return;
+  }
+
+  if (tela === "entreOndas" && k === "Enter") {
+    iniciarOnda();
+    return;
+  }
+
+  if ((tela === "gameover" || tela === "vitoria") && k === "Enter") {
+    reiniciarTudo();
+    return;
+  }
+
+  if (tela !== "jogando") return;
+
+  if (k === "a" || k === "A" || k === "ArrowLeft") {
+    teclas.esquerda = true;
+    player.olhando = -1;
+  }
+
+  if (k === "d" || k === "D" || k === "ArrowRight") {
+    teclas.direita = true;
+    player.olhando = 1;
+  }
+
+  if (k === "s" || k === "S" || k === "ArrowDown") {
+    teclas.baixo = true;
+  }
+
+  if (k === "w" || k === "W" || k === "ArrowUp" || k === " ") {
+    teclas.pulo = true;
+  }
+
+  if ((k === "j" || k === "J") && !e.repeat) {
+    iniciarAtaque();
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  const k = e.key;
+
+  if (k === "a" || k === "A" || k === "ArrowLeft") teclas.esquerda = false;
+  if (k === "d" || k === "D" || k === "ArrowRight") teclas.direita = false;
+  if (k === "s" || k === "S" || k === "ArrowDown") teclas.baixo = false;
+  if (k === "w" || k === "W" || k === "ArrowUp" || k === " ") teclas.pulo = false;
+});
+
+canvas.addEventListener("mousedown", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  for (const b of botoes) {
+    if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+      b.acao();
+      return;
+    }
+  }
+
+  if (tela === "jogando") {
+    iniciarAtaque();
+  }
+});
+
+// =====================================================
+// FLUXO DE TELAS
+// =====================================================
+function abrirEntreOndas() {
+  tela = "entreOndas";
+}
+
+function iniciarOnda() {
+  if (tela !== "entreOndas") return;
+
+  tela = "jogando";
+  ondaAtual++;
+  ondaAtiva = true;
+  inimigosParaNascer = quantidadeInimigosDaOnda();
+  inimigosTotaisOnda = inimigosParaNascer;
+  tempoSpawn = intervaloSpawnOnda();
+
+  ataque.ativo = false;
+  contadorCombo = 0;
+  tempoResetCombo = 0;
+  projeteisChefe = [];
+}
+
+function finalizarOnda() {
+  ondaAtiva = false;
+  projeteisChefe = [];
+
+  if (ondaFinal()) {
+    tela = "vitoria";
+    return;
+  }
+
+  tela = "powerup";
+  gerarPowerups();
+  curarAoFimDaOnda();
+}
+
+function curarAoFimDaOnda() {
+  player.vidaMaxima = vidaMaximaPlayer();
+  player.vida = Math.min(player.vidaMaxima, player.vida + 1);
+}
+
+function gerarPowerups() {
+  const disponiveis = POWERUPS.filter(p => powerLevels[p.id] < LIMITE_POWER);
+  embaralhar(disponiveis);
+  escolhasPowerup = disponiveis.slice(0, Math.min(3, disponiveis.length));
+}
+
+function escolherPowerup(id) {
+  if (powerLevels[id] >= LIMITE_POWER) return;
+
+  powerLevels[id]++;
+
+  if (id === "vidaMaxima") {
+    player.vidaMaxima = vidaMaximaPlayer();
+    player.vida = player.vidaMaxima;
+  }
+
+  tela = "entreOndas";
+}
+
+function reiniciarTudo() {
+  tela = "titulo";
+  pontos = 0;
+  mortes = 0;
+  ondaAtual = 0;
+  ondaAtiva = false;
+  inimigosParaNascer = 0;
+  inimigosTotaisOnda = 0;
+  tempoSpawn = 0;
+  inimigos = [];
+  projeteisChefe = [];
+  particulas = [];
+  proximoIdInimigo = 1;
+  ataque.ativo = false;
+  contadorCombo = 0;
+  tempoResetCombo = 0;
+  shakeTela = 0;
+
+  for (const id in powerLevels) {
+    powerLevels[id] = 0;
+  }
+
+  player.x = 140;
+  player.y = CHAO_Y - player.altura;
+  player.velY = 0;
+  player.noChao = true;
+  player.olhando = 1;
+  player.cooldownAtaque = 0;
+  player.invulneravel = 0;
+  player.vidaMaxima = VIDA_PLAYER_BASE;
+  player.vida = player.vidaMaxima;
+
+  teclas.esquerda = false;
+  teclas.direita = false;
+  teclas.baixo = false;
+  teclas.pulo = false;
+}
+
+// =====================================================
+// ATAQUE
+// =====================================================
+function iniciarAtaque() {
+  if (player.cooldownAtaque > 0) return;
+
+  if (tempoResetCombo <= 0) {
+    contadorCombo = 0;
+  }
+
+  contadorCombo++;
+
+  let especial = false;
+  if (contadorCombo >= 3) {
+    especial = true;
+    contadorCombo = 0;
+  }
+
+  tempoResetCombo = TEMPO_COMBO;
+
+  const multEspecial = especial ? MULT_COMBO : 1;
+  const golpeParaBaixo = teclas.baixo;
+
+  ataque.ativo = true;
+  ataque.especial = especial;
+  ataque.tempo = duracaoAtaque() * multEspecial;
+  ataque.direcao = player.olhando;
+  ataque.vertical = golpeParaBaixo ? 1 : 0;
+
+  if (golpeParaBaixo) {
+    ataque.largura = alturaAtaque() * multEspecial;
+    ataque.altura = larguraAtaque() * 1.25 * multEspecial;
+  } else {
+    ataque.largura = larguraAtaque() * multEspecial;
+    ataque.altura = alturaAtaque() * multEspecial;
+  }
+
+  ataque.dano = danoAtaque() * (especial ? 1.15 : 1);
+  ataque.atingidos = new Set();
+
+  posicionarAtaque();
+
+  player.cooldownAtaque = cooldownAtaque();
+}
+
+function posicionarAtaque() {
+  if (!ataque.ativo) return;
+
+  const dist = distanciaAtaque();
+
+  if (ataque.vertical === 1) {
+    ataque.x = player.x + player.largura / 2 - ataque.largura / 2;
+    ataque.y = player.y + player.altura + dist * 0.45;
+
+    if (ataque.y + ataque.altura > CHAO_Y) {
+      ataque.y = CHAO_Y - ataque.altura;
+    }
+
+    return;
+  }
+
+  if (ataque.direcao === 1) {
+    ataque.x = player.x + player.largura + dist;
+  } else {
+    ataque.x = player.x - ataque.largura - dist;
+  }
+
+  ataque.y = player.y + player.altura / 2 - ataque.altura / 2;
+}
+
+function atualizarAtaque(dt) {
+  if (!ataque.ativo) return;
+
+  ataque.tempo -= dt;
+  posicionarAtaque();
+
+  if (ataque.tempo <= 0) {
+    ataque.ativo = false;
+  }
+}
+
+// =====================================================
+// ATUALIZAÇÃO
+// =====================================================
+function atualizar(dt) {
+  tempoTotal += dt;
+
+  if (shakeTela > 0) {
+    shakeTela -= dt;
+  }
+
+  atualizarParticulas(dt);
+
+  if (tela !== "jogando") return;
+
+  atualizarPlayer(dt);
+  atualizarAtaque(dt);
+  atualizarSpawn(dt);
+  atualizarInimigos(dt);
+  atualizarProjeteisChefe(dt);
+
+  if (ondaAtiva && inimigosParaNascer <= 0 && inimigos.length === 0) {
+    finalizarOnda();
+  }
+}
+
+function atualizarPlayer(dt) {
+  if (teclas.esquerda) {
+    player.x -= velPlayer() * dt;
+    player.olhando = -1;
+  }
+
+  if (teclas.direita) {
+    player.x += velPlayer() * dt;
+    player.olhando = 1;
+  }
+
+  if (teclas.pulo && player.noChao) {
+    player.velY = -forcaPulo();
+    player.noChao = false;
+  }
+
+  player.velY += gravidadePlayer() * dt;
+  player.y += player.velY * dt;
+
+  if (player.y + player.altura >= CHAO_Y) {
+    player.y = CHAO_Y - player.altura;
+    player.velY = 0;
+    player.noChao = true;
+  }
+
+  player.x = clamp(player.x, 0, canvas.width - player.largura);
+
+  if (player.cooldownAtaque > 0) {
+    player.cooldownAtaque -= dt;
+  }
+
+  if (player.invulneravel > 0) {
+    player.invulneravel -= dt;
+  }
+
+  if (tempoResetCombo > 0) {
+    tempoResetCombo -= dt;
+    if (tempoResetCombo <= 0) {
+      contadorCombo = 0;
+    }
+  }
+}
+
+function atualizarSpawn(dt) {
+  if (!ondaAtiva) return;
+  if (inimigosParaNascer <= 0) return;
+
+  tempoSpawn += dt * 1000;
+
+  const intervalo = intervaloSpawnOnda();
+
+  while (tempoSpawn >= intervalo && inimigosParaNascer > 0) {
+    criarInimigo();
+    inimigosParaNascer--;
+    tempoSpawn -= intervalo;
+  }
+}
+
+function atualizarInimigos(dt) {
+  for (let i = inimigos.length - 1; i >= 0; i--) {
+    const e = inimigos[i];
+
+    atualizarIAInimigo(e, dt);
+
+    if (
+      ataque.ativo &&
+      colidiu(ataque, e) &&
+      !ataque.atingidos.has(e.id)
+    ) {
+      ataque.atingidos.add(e.id);
+      atingirInimigo(e, i);
+      continue;
+    }
+
+    if (player.invulneravel <= 0 && colidiu(player, e)) {
+      machucarPlayer(e);
+    }
+
+    if (e.y > canvas.height + 200 || e.x < -260 || e.x > canvas.width + 260) {
+      inimigos.splice(i, 1);
+    }
+  }
+}
+
+function atualizarIAInimigo(e, dt) {
+  const def = TIPOS_INIMIGO[e.tipo];
+
+  e.piscando = Math.max(0, e.piscando - dt);
+
+  if (def.boss) {
+    atualizarChefe(e, dt);
+    return;
+  }
+
+  if (def.voa) {
+    atualizarInimigoVoador(e, dt);
+    return;
+  }
+
+  if (Math.abs((player.x + player.largura / 2) - (e.x + e.largura / 2)) > 12) {
+    e.direcao = player.x > e.x ? 1 : -1;
+  }
+
+  let v = e.velocidade;
+
+  if (def.investe) {
+    e.tempoInvestida -= dt;
+
+    if (e.tempoInvestida <= 0 && e.noChao) {
+      e.investindo = 0.45;
+      e.tempoInvestida = 1.4 + Math.random() * 1.8;
+      criarParticulas(e.x + e.largura / 2, e.y + e.altura, 10, "#5fffd0");
+    }
+
+    if (e.investindo > 0) {
+      e.investindo -= dt;
+      v = Math.min(v * 2.4, velocidadeMaximaInimigo());
+    }
+  }
+
+  e.x += e.direcao * v * dt;
+
+  if (def.pula) {
+    e.tempoPulo -= dt;
+
+    if (e.noChao && e.tempoPulo <= 0) {
+      const forca = def.saltoPesado ? 560 : 470;
+      e.velY = -forca - Math.random() * 110;
+      e.noChao = false;
+      e.tempoPulo = def.saltoPesado ? 1.1 + Math.random() * 1.4 : 0.7 + Math.random() * 1.2;
+    }
+  }
+
+  e.velY += GRAVIDADE_BASE * dt;
+  e.y += e.velY * dt;
+
+  if (e.y + e.altura >= CHAO_Y) {
+    e.y = CHAO_Y - e.altura;
+    e.velY = 0;
+    e.noChao = true;
+  }
+}
+
+function atualizarInimigoVoador(e, dt) {
+  const def = TIPOS_INIMIGO[e.tipo];
+  const alvoX = player.x + player.largura / 2 - e.largura / 2;
+  const alvoY = player.y + player.altura / 2 - e.altura / 2;
+
+  e.direcao = alvoX > e.x ? 1 : -1;
+
+  let v = e.velocidade;
+
+  if (def.investe) {
+    e.tempoInvestida -= dt;
+
+    if (e.tempoInvestida <= 0) {
+      e.investindo = 0.55;
+      e.tempoInvestida = 1.3 + Math.random() * 1.4;
+      criarParticulas(e.x + e.largura / 2, e.y + e.altura / 2, 8, "#b5ff5c");
+    }
+
+    if (e.investindo > 0) {
+      e.investindo -= dt;
+      v = Math.min(v * 2.2, velocidadeMaximaInimigo());
+    }
+  }
+
+  e.x += Math.sign(alvoX - e.x) * v * dt;
+  e.y += Math.sign(alvoY - e.y) * v * 0.55 * dt;
+  e.y += Math.sin(tempoTotal * 5 + e.id) * 22 * dt;
+
+  e.y = clamp(e.y, 70, CHAO_Y - e.altura - 70);
+}
+
+function atualizarChefe(e, dt) {
+  const def = TIPOS_INIMIGO[e.tipo];
+
+  if (def.finalBoss) {
+    atualizarChefeFinal50(e, dt);
+    return;
+  }
+
+  if (def.bossRoxo) {
+    atualizarChefeRoxo25(e, dt);
+    return;
+  }
+
+  atualizarChefeColosso(e, dt);
+}
+
+function atualizarChefeColosso(e, dt) {
+  const centroPlayer = player.x + player.largura / 2;
+  const centroChefe = e.x + e.largura / 2;
+  e.direcao = centroPlayer > centroChefe ? 1 : -1;
+
+  e.x += e.direcao * e.velocidade * dt;
+  e.x = clamp(e.x, 40, canvas.width - e.largura - 40);
+
+  e.tempoPulo -= dt;
+  e.tempoTiro -= dt;
+  e.tempoInvocar -= dt;
+  e.tempoSlam -= dt;
+
+  if (e.noChao && e.tempoPulo <= 0) {
+    e.velY = -610;
+    e.noChao = false;
+    e.tempoPulo = 1.7 + Math.random() * 1.2;
+  }
+
+  if (e.tempoTiro <= 0) {
+    criarOndaDeChoque(e.x + e.largura / 2, "#9eff61", 1);
+    e.tempoTiro = Math.max(1.0, 2.0 - ondaAtual * 0.025);
+  }
+
+  if (e.tempoInvocar <= 0 && ondaAtual >= 10) {
+    criarInimigo(Math.random() < 0.5 ? "voador" : "rapido", e.x + e.largura / 2, null, e.direcao);
+    e.tempoInvocar = 4.6;
+  }
+
+  e.velY += GRAVIDADE_BASE * dt;
+  e.y += e.velY * dt;
+
+  if (e.y + e.altura >= CHAO_Y) {
+    if (!e.noChao && e.velY > 260) {
+      criarOndaDeChoque(e.x + e.largura / 2, "#d3ff61", 1);
+      shakeTela = 0.13;
+    }
+
+    e.y = CHAO_Y - e.altura;
+    e.velY = 0;
+    e.noChao = true;
+  }
+}
+
+function atualizarChefeRoxo25(e, dt) {
+  // O antigo chefe final agora aparece na onda 25: teleporta, atira e invoca voadores.
+  const centroPlayer = player.x + player.largura / 2;
+  const alvoX = clamp(centroPlayer - e.largura / 2, 90, canvas.width - e.largura - 90);
+
+  e.direcao = centroPlayer > e.x + e.largura / 2 ? 1 : -1;
+  e.x += (alvoX - e.x) * 0.55 * dt;
+
+  const baseY = CHAO_Y - e.altura - 45;
+  e.y = baseY + Math.sin(tempoTotal * 2.7) * 34;
+
+  e.tempoTiro -= dt;
+  e.tempoTeleporte -= dt;
+  e.tempoInvocar -= dt;
+
+  if (e.tempoTiro <= 0) {
+    dispararChefeRoxo(e);
+    e.tempoTiro = 0.72;
+  }
+
+  if (e.tempoTeleporte <= 0) {
+    e.x = Math.random() < 0.5 ? 110 : canvas.width - e.largura - 110;
+    criarParticulas(e.x + e.largura / 2, e.y + e.altura / 2, 28, "#c77dff");
+    shakeTela = 0.10;
+    e.tempoTeleporte = 2.4 + Math.random() * 0.8;
+  }
+
+  if (e.tempoInvocar <= 0) {
+    criarInimigo("voador", e.x + e.largura / 2, 130 + Math.random() * 180, -1);
+    criarInimigo("voador", e.x + e.largura / 2, 130 + Math.random() * 180, 1);
+    criarParticulas(e.x + e.largura / 2, e.y + e.altura / 2, 18, "#b35cff");
+    e.tempoInvocar = 4.1;
+  }
+}
+
+function atualizarChefeFinal50(e, dt) {
+  // Chefe final da onda 50: mais agressivo, padrões misturados, arena cheia de projéteis.
+  const centroPlayer = player.x + player.largura / 2;
+  const centroChefe = e.x + e.largura / 2;
+
+  e.direcao = centroPlayer > centroChefe ? 1 : -1;
+
+  const alvoX = clamp(centroPlayer - e.largura / 2, 70, canvas.width - e.largura - 70);
+  e.x += (alvoX - e.x) * 0.82 * dt;
+
+  const baseY = CHAO_Y - e.altura - 70;
+  e.y = baseY + Math.sin(tempoTotal * 4.2) * 54;
+
+  e.tempoTiro -= dt;
+  e.tempoTeleporte -= dt;
+  e.tempoInvocar -= dt;
+  e.tempoSlam -= dt;
+
+  if (e.tempoTiro <= 0) {
+    dispararChefeFinal50(e);
+    e.tempoTiro = 0.48;
+  }
+
+  if (e.tempoTeleporte <= 0) {
+    e.x = Math.random() < 0.5 ? 70 : canvas.width - e.largura - 70;
+    e.y = 120 + Math.random() * 170;
+    criarParticulas(e.x + e.largura / 2, e.y + e.altura / 2, 42, "#ff4dff");
+    shakeTela = 0.16;
+    e.tempoTeleporte = 1.8 + Math.random() * 0.8;
+  }
+
+  if (e.tempoInvocar <= 0) {
+    criarInimigo("voadorRapido", e.x + e.largura / 2, 120 + Math.random() * 230, -1);
+    criarInimigo("voadorRapido", e.x + e.largura / 2, 120 + Math.random() * 230, 1);
+    criarInimigo("mini", e.x + e.largura / 2, CHAO_Y - 24, Math.random() < 0.5 ? -1 : 1);
+    criarParticulas(e.x + e.largura / 2, e.y + e.altura / 2, 24, "#ff4dff");
+    e.tempoInvocar = 3.6;
+  }
+
+  if (e.tempoSlam <= 0) {
+    criarOndaDeChoque(e.x + e.largura / 2, "#ff4dff", 2);
+    e.tempoSlam = 2.5;
+  }
+}
+
+function dispararChefeRoxo(e) {
+  const padrao = Math.floor(Math.random() * 3);
+  const cx = e.x + e.largura / 2;
+  const cy = e.y + e.altura / 2;
+
+  if (padrao === 0) {
+    for (let i = -1; i <= 1; i++) {
+      criarProjetilChefe(cx, cy, player.x + player.largura / 2 + i * 70, player.y + player.altura / 2, 270, 15, "#c77dff", 1);
+    }
+  } else if (padrao === 1) {
+    criarLequeProjetil(cx, cy, 5, 245, "#c77dff", 1);
+  } else {
+    criarChuvaProjetil(7, "#d9a5ff", 1);
+  }
+
+  criarParticulas(cx, cy, 12, "#d9a5ff");
+}
+
+function dispararChefeFinal50(e) {
+  const padrao = Math.floor(Math.random() * 5);
+  const cx = e.x + e.largura / 2;
+  const cy = e.y + e.altura / 2;
+
+  if (padrao === 0) {
+    for (let i = -2; i <= 2; i++) {
+      criarProjetilChefe(cx, cy, player.x + player.largura / 2 + i * 55, player.y + player.altura / 2, 330, 16, "#ff4dff", 1);
+    }
+  } else if (padrao === 1) {
+    criarLequeProjetil(cx, cy, 9, 285, "#ff74ff", 1);
+  } else if (padrao === 2) {
+    criarChuvaProjetil(12, "#e6a2ff", 1);
+  } else if (padrao === 3) {
+    criarOndaDeChoque(cx, "#ff4dff", 2);
+  } else {
+    for (let i = 0; i < 4; i++) {
+      criarProjetilChefe(cx, cy, 100 + i * 300, CHAO_Y - 60, 260, 22, "#9b36ff", 2);
+    }
+  }
+
+  criarParticulas(cx, cy, 16, "#ff8cff");
+}
+
+function criarLequeProjetil(cx, cy, quantidade, velocidade, cor, dano) {
+  const inicio = -Math.PI * 0.82;
+  const fim = -Math.PI * 0.18;
+
+  for (let i = 0; i < quantidade; i++) {
+    const t = quantidade === 1 ? 0.5 : i / (quantidade - 1);
+    const ang = inicio + (fim - inicio) * t;
+    projeteisChefe.push({
+      x: cx,
+      y: cy,
+      largura: 16,
+      altura: 16,
+      velX: Math.cos(ang) * velocidade,
+      velY: Math.sin(ang) * velocidade,
+      vida: 4.0,
+      cor,
+      dano
+    });
+  }
+}
+
+function criarChuvaProjetil(qtd, cor, dano) {
+  for (let i = 0; i < qtd; i++) {
+    projeteisChefe.push({
+      x: 70 + Math.random() * (canvas.width - 140),
+      y: -20 - Math.random() * 180,
+      largura: 18,
+      altura: 18,
+      velX: (Math.random() - 0.5) * 70,
+      velY: 260 + Math.random() * 150,
+      vida: 4.8,
+      cor,
+      dano
+    });
+  }
+}
+
+function criarOndaDeChoque(x, cor, dano) {
+  projeteisChefe.push({
+    x: x - 12,
+    y: CHAO_Y - 28,
+    largura: 28,
+    altura: 22,
+    velX: -300,
+    velY: 0,
+    vida: 2.4,
+    cor,
+    dano
+  });
+
+  projeteisChefe.push({
+    x: x - 12,
+    y: CHAO_Y - 28,
+    largura: 28,
+    altura: 22,
+    velX: 300,
+    velY: 0,
+    vida: 2.4,
+    cor,
+    dano
+  });
+}
+
+function criarProjetilChefe(x, y, alvoX, alvoY, velocidade, tamanho, cor = "#c77dff", dano = 1) {
+  const dx = alvoX - x;
+  const dy = alvoY - y;
+  const dist = Math.max(1, Math.hypot(dx, dy));
+
+  projeteisChefe.push({
+    x,
+    y,
+    largura: tamanho,
+    altura: tamanho,
+    velX: dx / dist * velocidade,
+    velY: dy / dist * velocidade,
+    vida: 4.0,
+    cor,
+    dano
+  });
+}
+
+function atualizarProjeteisChefe(dt) {
+  for (let i = projeteisChefe.length - 1; i >= 0; i--) {
+    const p = projeteisChefe[i];
+
+    p.x += p.velX * dt;
+    p.y += p.velY * dt;
+    p.vida -= dt;
+
+    if (player.invulneravel <= 0 && colidiu(player, p)) {
+      player.vida -= p.dano || 1;
+      player.invulneravel = 0.85;
+      player.velY = -280;
+      shakeTela = 0.14;
+      criarParticulas(player.x + player.largura / 2, player.y + player.altura / 2, 16, p.cor || "#ff4dff");
+      projeteisChefe.splice(i, 1);
+
+      if (player.vida <= 0) {
+        tela = "gameover";
+        ondaAtiva = false;
+      }
+
+      continue;
+    }
+
+    if (p.vida <= 0 || p.x < -100 || p.x > canvas.width + 100 || p.y < -160 || p.y > canvas.height + 160) {
+      projeteisChefe.splice(i, 1);
+    }
+  }
+}
+
+function atingirInimigo(e, indice) {
+  const def = TIPOS_INIMIGO[e.tipo];
+
+  let dano = ataque.dano;
+
+  if (def.boss) {
+    dano = ataque.especial ? 1.15 : 1;
+  }
+
+  if (def.blindado) {
+    dano = Math.min(dano, 1.1);
+  }
+
+  e.vida -= dano;
+  e.piscando = 0.08;
+
+  criarParticulas(
+    e.x + e.largura / 2,
+    e.y + e.altura / 2,
+    ataque.especial ? 16 : 8,
+    "#78ff73"
+  );
+
+  if (ataque.vertical === 1) {
+    aplicarPogo();
+  }
+
+  if (e.vida <= 0) {
+    destruirInimigo(e, indice);
+  }
+}
+
+
+function aplicarPogo() {
+  player.velY = -Math.max(IMPULSO_POGO, forcaPulo() * 0.72);
+  player.noChao = false;
+  player.invulneravel = Math.max(player.invulneravel, 0.10);
+  criarParticulas(player.x + player.largura / 2, player.y + player.altura + 4, 10, "#35d9ff");
+}
+
+function destruirInimigo(e, indice) {
+  pontos += e.pontos;
+  mortes++;
+
+  criarExplosao(e.x + e.largura / 2, e.y + e.altura / 2, e.tipo);
+
+  if (TIPOS_INIMIGO[e.tipo].finalBoss) {
+    inimigos.splice(indice, 1);
+    inimigos = [];
+    projeteisChefe = [];
+    finalizarOnda();
+    return;
+  }
+
+  if (TIPOS_INIMIGO[e.tipo].divide) {
+    criarInimigo("mini", e.x + 8, e.y + e.altura - 24, -1);
+    criarInimigo("mini", e.x + e.largura - 24, e.y + e.altura - 24, 1);
+  }
+
+  inimigos.splice(indice, 1);
+}
+
+function machucarPlayer(e) {
+  player.vida -= TIPOS_INIMIGO[e.tipo].boss ? 2 : 1;
+  player.invulneravel = 0.85;
+  player.velY = -330;
+  player.x += e.direcao * 28;
+  shakeTela = 0.18;
+
+  criarParticulas(player.x + player.largura / 2, player.y + player.altura / 2, 18, "#ff4d4d");
+
+  if (player.vida <= 0) {
+    tela = "gameover";
+    ondaAtiva = false;
+  }
+}
+
+// =====================================================
+// PARTICULAS
+// =====================================================
+function criarExplosao(x, y, tipo = "normal") {
+  const def = TIPOS_INIMIGO[tipo] || TIPOS_INIMIGO.normal;
+  let qtd = def.boss ? 42 : (tipo.includes("gigante") || tipo === "gigante" ? 32 : 18);
+
+  criarParticulas(x, y, qtd, def.cor);
+
+  if (particulas.length > MAX_PARTICULAS) {
+    particulas.splice(0, particulas.length - MAX_PARTICULAS);
+  }
+}
+
+function criarParticulas(x, y, qtd, cor) {
+  for (let i = 0; i < qtd; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const v = 80 + Math.random() * 330;
+    const tam = 3 + Math.random() * 8;
+
+    particulas.push({
+      x,
+      y,
+      largura: tam,
+      altura: tam,
+      velX: Math.cos(ang) * v,
+      velY: Math.sin(ang) * v - 70,
+      vida: 0.28 + Math.random() * 0.55,
+      vidaMax: 0.9,
+      cor
+    });
+  }
+
+  if (particulas.length > MAX_PARTICULAS) {
+    particulas.splice(0, particulas.length - MAX_PARTICULAS);
+  }
+}
+
+function atualizarParticulas(dt) {
+  for (let i = particulas.length - 1; i >= 0; i--) {
+    const p = particulas[i];
+
+    p.x += p.velX * dt;
+    p.y += p.velY * dt;
+    p.velY += 520 * dt;
+    p.vida -= dt;
+
+    if (p.vida <= 0 || p.y + p.altura > CHAO_Y - 4) {
+      particulas.splice(i, 1);
+    }
+  }
+}
+
+// =====================================================
+// DESENHO
+// =====================================================
+function desenhar() {
+  botoes = [];
+
+  ctx.save();
+
+  if (shakeTela > 0) {
+    ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+  }
+
+  desenharFundo();
+
+  if (tela !== "titulo" && tela !== "ajuda") {
+    desenharMundo();
+    desenharHUD();
+  }
+
+  if (tela === "titulo") desenharTitulo();
+  if (tela === "ajuda") desenharAjuda();
+  if (tela === "entreOndas") desenharTelaEntreOndas();
+  if (tela === "powerup") desenharTelaPowerup();
+  if (tela === "gameover") desenharGameOver();
+  if (tela === "vitoria") desenharVitoria();
+
+  ctx.restore();
+}
+
+function desenharFundo() {
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, "#101427");
+  grad.addColorStop(0.55, "#070a12");
+  grad.addColorStop(1, "#030407");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.globalAlpha = 0.15;
+  ctx.strokeStyle = "#6b7cff";
+  ctx.lineWidth = 1;
+
+  const offset = (tempoTotal * 24) % 60;
+  for (let x = -60 + offset; x < canvas.width + 60; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x - 180, canvas.height);
+    ctx.stroke();
+  }
+
+  for (let y = 30; y < canvas.height; y += 60) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  const radial = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 100, canvas.width/2, canvas.height/2, 780);
+  radial.addColorStop(0, "rgba(255,255,255,0.02)");
+  radial.addColorStop(1, "rgba(0,0,0,0.62)");
+  ctx.fillStyle = radial;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function desenharMundo() {
+  // Chão encostado no fundo da tela
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  arredondarRetangulo(0, CHAO_Y, canvas.width, ALTURA_CHAO, 0, true, false);
+
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  for (let x = 0; x < canvas.width; x += 42) {
+    ctx.fillRect(x, CHAO_Y + 6, 22, 4);
+  }
+
+  if (ataque.ativo) {
+    ctx.save();
+    ctx.globalAlpha = ataque.especial ? 0.95 : 0.80;
+    ctx.shadowColor = ataque.especial ? "#31e7ff" : "#145cff";
+    ctx.shadowBlur = ataque.especial ? 24 : 14;
+    ctx.fillStyle = ataque.especial ? "#28d8ff" : "#185cff";
+    arredondarRetangulo(ataque.x, ataque.y, ataque.largura, ataque.altura, 10, true, false);
+
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = "white";
+    if (ataque.vertical === 1) {
+      arredondarRetangulo(ataque.x + 4, ataque.y + 4, Math.max(4, ataque.largura * 0.25), ataque.altura - 8, 6, true, false);
+    } else {
+      arredondarRetangulo(ataque.x + 4, ataque.y + 4, ataque.largura - 8, Math.max(4, ataque.altura * 0.25), 6, true, false);
+    }
+    ctx.restore();
+  }
+
+  desenharPlayer();
+
+  for (const e of inimigos) {
+    desenharInimigo(e);
+  }
+
+  for (const p of projeteisChefe) {
+    ctx.save();
+    ctx.shadowColor = p.cor;
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = p.cor;
+    arredondarRetangulo(p.x, p.y, p.largura, p.altura, 7, true, false);
+    ctx.restore();
+  }
+
+  for (const p of particulas) {
+    const a = clamp(p.vida / p.vidaMax, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.cor;
+    arredondarRetangulo(p.x, p.y, p.largura, p.altura, 2, true, false);
+    ctx.restore();
+  }
+}
+
+function desenharPlayer() {
+  ctx.save();
+
+  if (player.invulneravel > 0) {
+    ctx.globalAlpha = 0.55 + Math.sin(tempoTotal * 40) * 0.25;
+  }
+
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.beginPath();
+  ctx.ellipse(player.x + player.largura / 2, CHAO_Y + 8, player.largura * 0.55, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const grad = ctx.createLinearGradient(player.x, player.y, player.x, player.y + player.altura);
+  grad.addColorStop(0, "#ff6b6b");
+  grad.addColorStop(1, "#bd1212");
+
+  ctx.shadowColor = "#ff2d2d";
+  ctx.shadowBlur = player.invulneravel > 0 ? 22 : 8;
+  ctx.fillStyle = grad;
+  arredondarRetangulo(player.x, player.y, player.largura, player.altura, 10, true, false);
+
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#ffd1d1";
+  arredondarRetangulo(player.x, player.y, player.largura, player.altura, 10, false, true);
+
+  // Olhos inteiramente pretos
+  ctx.fillStyle = "#050505";
+  const olhoY = player.y + 14;
+  const olhoX1 = player.x + (player.olhando === 1 ? 27 : 12);
+  const olhoX2 = player.x + (player.olhando === 1 ? 37 : 22);
+  ctx.fillRect(olhoX1, olhoY, 7, 9);
+  ctx.fillRect(olhoX2, olhoY, 7, 9);
+
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.fillRect(player.x + 7, player.y + 8, 7, player.altura - 16);
+
+  ctx.restore();
+}
+
+function desenharInimigo(e) {
+  const def = TIPOS_INIMIGO[e.tipo];
+
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.42)";
+  ctx.beginPath();
+  ctx.ellipse(e.x + e.largura / 2, CHAO_Y + 8, e.largura * 0.52, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (e.piscando > 0) {
+    ctx.globalAlpha = 0.65;
+  }
+
+  const grad = ctx.createLinearGradient(e.x, e.y, e.x, e.y + e.altura);
+  grad.addColorStop(0, def.cor);
+  grad.addColorStop(1, def.cor2);
+
+  ctx.shadowColor = def.cor;
+  ctx.shadowBlur = def.boss ? 18 : 8;
+  ctx.fillStyle = grad;
+  arredondarRetangulo(e.x, e.y, e.largura, e.altura, def.boss ? 14 : 8, true, false);
+
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = def.boss ? 4 : 2;
+  ctx.strokeStyle = def.blindado ? "#eaffea" : "rgba(255,255,255,0.58)";
+  arredondarRetangulo(e.x, e.y, e.largura, e.altura, def.boss ? 14 : 8, false, true);
+
+  ctx.fillStyle = "#081008";
+  const olhoY = e.y + Math.max(8, e.altura * 0.24);
+  const ox = e.direcao === 1 ? e.x + e.largura * 0.56 : e.x + e.largura * 0.28;
+  ctx.fillRect(ox, olhoY, Math.max(4, e.largura * 0.09), Math.max(5, e.altura * 0.12));
+  ctx.fillRect(ox + e.largura * 0.18, olhoY, Math.max(4, e.largura * 0.09), Math.max(5, e.altura * 0.12));
+
+  if (def.voa) {
+    ctx.fillStyle = "rgba(255,255,255,0.72)";
+    ctx.beginPath();
+    ctx.ellipse(e.x + 4, e.y + e.altura * 0.45, 12, 7, -0.4, 0, Math.PI * 2);
+    ctx.ellipse(e.x + e.largura - 4, e.y + e.altura * 0.45, 12, 7, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (def.pula) {
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.moveTo(e.x + e.largura * 0.5, e.y + 7);
+    ctx.lineTo(e.x + e.largura * 0.62, e.y + 18);
+    ctx.lineTo(e.x + e.largura * 0.38, e.y + 18);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  if (def.blindado) {
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(e.x + 8, e.y + e.altura * 0.55);
+    ctx.lineTo(e.x + e.largura - 8, e.y + e.altura * 0.55);
+    ctx.stroke();
+  }
+
+  if (def.investe) {
+    ctx.fillStyle = e.investindo > 0 ? "#fff27a" : "rgba(255,255,255,0.75)";
+    ctx.fillRect(e.x + e.largura * 0.2, e.y + e.altura - 12, e.largura * 0.6, 5);
+  }
+
+  if (def.divide) {
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(e.x + e.largura / 2 - 2, e.y + 6, 4, e.altura - 12);
+  }
+
+  if (e.vidaMaxima > 1) {
+    const bw = e.largura;
+    const bh = def.boss ? 8 : 5;
+    const bx = e.x;
+    const by = e.y - (def.boss ? 15 : 10);
+
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    arredondarRetangulo(bx, by, bw, bh, 3, true, false);
+
+    ctx.fillStyle = def.boss ? "#ffea61" : "#ffffff";
+    const pct = clamp(e.vida / e.vidaMaxima, 0, 1);
+    arredondarRetangulo(bx, by, bw * pct, bh, 3, true, false);
+  }
+
+  if (def.boss) {
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = "bold 12px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(def.finalBoss ? "CORAÇÃO DO ABISMO" : def.bossRoxo ? "NÚCLEO ROXO" : "COLOSSO", e.x + e.largura / 2, e.y - 20);
+    ctx.textAlign = "left";
+  }
+
+  ctx.restore();
+}
+
+function desenharHUD() {
+  const painelX = 22;
+  const painelY = 18;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.42)";
+  arredondarRetangulo(painelX, painelY, 390, 104, 14, true, false);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.stroke();
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 22px Arial";
+  ctx.fillText("Onda " + ondaAtual, painelX + 18, painelY + 32);
+
+  ctx.font = "16px Arial";
+  ctx.fillText("Pontos: " + pontos, painelX + 18, painelY + 58);
+  ctx.fillText("Mortes: " + mortes, painelX + 150, painelY + 58);
+
+  if (tela === "jogando") {
+    ctx.fillText("Restantes: " + inimigosParaNascer + "  |  Na tela: " + inimigos.length, painelX + 18, painelY + 84);
+  } else {
+    ctx.fillText("Prepare-se para a próxima onda", painelX + 18, painelY + 84);
+  }
+
+  const hx = canvas.width - 270;
+  const hy = 25;
+
+  ctx.fillStyle = "rgba(0,0,0,0.42)";
+  arredondarRetangulo(hx - 16, hy - 8, 248, 84, 14, true, false);
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.stroke();
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 16px Arial";
+  ctx.fillText("VIDA", hx, hy + 9);
+
+  const vidaMax = player.vidaMaxima;
+  const coracoes = Math.min(vidaMax, 12);
+  for (let i = 0; i < coracoes; i++) {
+    const cheio = i < player.vida;
+    ctx.fillStyle = cheio ? "#ff4040" : "rgba(255,255,255,0.16)";
+    desenharCoracao(hx + i * 18, hy + 28, 13);
+  }
+
+  if (vidaMax > 12) {
+    ctx.fillStyle = "white";
+    ctx.font = "13px Arial";
+    ctx.fillText("+" + (vidaMax - 12), hx + 218, hy + 41);
+  }
+
+  ctx.fillStyle = "white";
+  ctx.font = "13px Arial";
+  ctx.fillText("Combo: " + contadorCombo + "/3", hx, hy + 66);
+  ctx.fillText("Atk: " + Math.round(cooldownAtaque() * 1000) + "ms", hx + 100, hy + 66);
+
+  ctx.restore();
+}
+
+// =====================================================
+// TELAS
+// =====================================================
+function desenharTitulo() {
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.58)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = "center";
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 92px Arial";
+  ctx.shadowColor = "#34d9ff";
+  ctx.shadowBlur = 24;
+  ctx.fillText("waves", canvas.width / 2, 175);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#9aefff";
+  ctx.font = "22px Arial";
+  ctx.fillText("Sobreviva às ondas. Chefes a cada 5. O terror real começa na 25 e acaba na 50.", canvas.width / 2, 214);
+
+  desenharMiniElenco(canvas.width / 2 - 250, 270);
+
+  desenharBotao(canvas.width / 2 - 150, 410, 300, 58, "COMEÇAR JOGO", abrirEntreOndas, true);
+  desenharBotao(canvas.width / 2 - 150, 482, 300, 50, "COMO JOGAR", () => tela = "ajuda", false);
+
+  ctx.fillStyle = "rgba(255,255,255,0.62)";
+  ctx.font = "15px Arial";
+  ctx.fillText("Enter também começa / S ou ↓ + J faz pogo para baixo", canvas.width / 2, 574);
+
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+function desenharMiniElenco(x, y) {
+  const tipos = ["normal", "rapido", "pulador", "tanque", "blindado", "divisor", "carregador", "gigante", "gigantePulador"];
+  for (let i = 0; i < tipos.length; i++) {
+    const def = TIPOS_INIMIGO[tipos[i]];
+    const sx = x + i * 62;
+    const sy = y + (i % 2) * 12;
+
+    ctx.fillStyle = def.cor;
+    arredondarRetangulo(sx, sy, 38, 38, 8, true, false);
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.stroke();
+    ctx.fillStyle = "#081008";
+    ctx.fillRect(sx + 12, sy + 13, 5, 7);
+    ctx.fillRect(sx + 23, sy + 13, 5, 7);
+  }
+}
+
+function desenharAjuda() {
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.72)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  desenharPainelCentral(760, 530);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "white";
+  ctx.font = "bold 42px Arial";
+  ctx.fillText("COMO JOGAR", canvas.width / 2, 120);
+
+  ctx.textAlign = "left";
+  ctx.font = "20px Arial";
+  const x = canvas.width / 2 - 315;
+  let y = 185;
+
+  const linhas = [
+    "A / ←: mover para esquerda",
+    "D / →: mover para direita",
+    "W / ↑ / Espaço: pular",
+    "J ou clique: atacar para frente",
+    "S / ↓ + J ou clique: atacar para baixo com impulso pogo",
+    "",
+    "Mate todos os inimigos da onda.",
+    "No fim da onda, escolha 1 entre 3 power-ups.",
+    "Cada power-up pode subir até o nível 5.",
+    "A cada 5 ondas, há uma batalha contra chefe.",
+    "Na onda 25, aparece o Núcleo Roxo.",
+    "Na onda 50, derrote o Coração do Abismo para zerar."
+  ];
+
+  for (const l of linhas) {
+    ctx.fillStyle = l === "" ? "transparent" : "rgba(255,255,255,0.9)";
+    ctx.fillText(l, x, y);
+    y += l === "" ? 18 : 34;
+  }
+
+  desenharBotao(canvas.width / 2 - 135, 585, 270, 54, "VOLTAR", () => tela = "titulo", false);
+
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+function desenharTelaEntreOndas() {
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.66)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  desenharPainelCentral(720, 330);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "white";
+  ctx.font = "bold 48px Arial";
+
+  const proxima = ondaAtual + 1;
+  ctx.fillText("ONDA " + proxima, canvas.width / 2, 210);
+
+  ctx.font = "20px Arial";
+  ctx.fillStyle = "rgba(255,255,255,0.82)";
+  const qtd = ondaDeChefe(proxima) ? 1 : Math.max(3, Math.round((7 + proxima * 3) / mult("menosMonstros")));
+  ctx.fillText("Inimigos previstos: " + qtd, canvas.width / 2, 258);
+
+  let aviso = "Novos inimigos aparecem conforme as ondas avançam.";
+  if (ondaFinal(proxima)) aviso = "ONDA FINAL: Coração do Abismo.";
+  else if (ondaRoxa(proxima)) aviso = "CHEFE ESPECIAL: Núcleo Roxo.";
+  else if (ondaDeChefe(proxima)) aviso = "BATALHA CONTRA CHEFE: derrote o Colosso.";
+  ctx.fillStyle = ondaDeChefe(proxima) ? "#ffdf61" : "#9aefff";
+  if (ondaRoxa(proxima)) ctx.fillStyle = "#d9a5ff";
+  if (ondaFinal(proxima)) ctx.fillStyle = "#ff74ff";
+  ctx.fillText(aviso, canvas.width / 2, 292);
+
+  desenharBotao(canvas.width / 2 - 150, 360, 300, 58, "COMEÇAR ONDA", iniciarOnda, true);
+
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.font = "14px Arial";
+  ctx.fillText("Pressione Enter ou clique no botão", canvas.width / 2, 455);
+
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+function desenharTelaPowerup() {
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.74)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "white";
+  ctx.font = "bold 48px Arial";
+  ctx.fillText("ONDA CONCLUÍDA", canvas.width / 2, 105);
+
+  ctx.fillStyle = "#9aefff";
+  ctx.font = "20px Arial";
+  ctx.fillText("Escolha um power-up para seguir.", canvas.width / 2, 142);
+
+  const cardW = 300;
+  const cardH = 285;
+  const gap = 28;
+  const startX = canvas.width / 2 - (cardW * 3 + gap * 2) / 2;
+  const y = 205;
+
+  for (let i = 0; i < escolhasPowerup.length; i++) {
+    desenharCardPowerup(startX + i * (cardW + gap), y, cardW, cardH, escolhasPowerup[i]);
+  }
+
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.font = "15px Arial";
+  ctx.fillText("Limite por power-up: nível 5. Cada nível aplica 1.15x.", canvas.width / 2, 552);
+
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+function desenharGameOver() {
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.72)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  desenharPainelCentral(660, 420);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ff5555";
+  ctx.font = "bold 62px Arial";
+  ctx.fillText("GAME OVER", canvas.width / 2, 205);
+
+  ctx.fillStyle = "white";
+  ctx.font = "22px Arial";
+  ctx.fillText("Você chegou até a onda " + ondaAtual, canvas.width / 2, 255);
+  ctx.fillText("Pontos: " + pontos + "   |   Inimigos derrotados: " + mortes, canvas.width / 2, 290);
+
+  desenharBotao(canvas.width / 2 - 150, 365, 300, 58, "JOGAR DE NOVO", reiniciarTudo, true);
+
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.font = "15px Arial";
+  ctx.fillText("Pressione Enter para reiniciar", canvas.width / 2, 455);
+
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+
+function desenharVitoria() {
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.76)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  desenharPainelCentral(700, 430);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#d9a5ff";
+  ctx.font = "bold 64px Arial";
+  ctx.shadowColor = "#b35cff";
+  ctx.shadowBlur = 24;
+  ctx.fillText("VOCÊ VENCEU", canvas.width / 2, 200);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "white";
+  ctx.font = "22px Arial";
+  ctx.fillText("O Coração do Abismo caiu na onda 50.", canvas.width / 2, 255);
+  ctx.fillText("Pontuação final: " + pontos + "   |   Inimigos derrotados: " + mortes, canvas.width / 2, 292);
+
+  desenharBotao(canvas.width / 2 - 150, 370, 300, 58, "JOGAR DE NOVO", reiniciarTudo, true);
+
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.font = "15px Arial";
+  ctx.fillText("Pressione Enter para reiniciar", canvas.width / 2, 460);
+
+  ctx.textAlign = "left";
+  ctx.restore();
+}
+
+function desenharCardPowerup(x, y, w, h, p) {
+  const nivel = powerLevels[p.id];
+  const proximo = nivel + 1;
+
+  ctx.save();
+
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  grad.addColorStop(0, "rgba(35,105,145,0.95)");
+  grad.addColorStop(1, "rgba(12,32,58,0.95)");
+
+  ctx.fillStyle = grad;
+  arredondarRetangulo(x, y, w, h, 18, true, false);
+
+  ctx.strokeStyle = "#72ecff";
+  ctx.lineWidth = 2;
+  arredondarRetangulo(x, y, w, h, 18, false, true);
+
+  ctx.fillStyle = "white";
+  ctx.textAlign = "center";
+  ctx.font = "bold 25px Arial";
+  ctx.fillText(p.nome, x + w / 2, y + 48);
+
+  ctx.fillStyle = "#ffe071";
+  ctx.font = "bold 16px Arial";
+  ctx.fillText(p.subtitulo, x + w / 2, y + 78);
+
+  ctx.fillStyle = "rgba(255,255,255,0.86)";
+  ctx.font = "16px Arial";
+  quebrarTexto(p.desc, x + 28, y + 120, w - 56, 23);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 18px Arial";
+  ctx.fillText("Nível " + nivel + " → " + proximo + "/5", x + w / 2, y + 210);
+
+  desenharBotao(x + 42, y + h - 62, w - 84, 44, "ESCOLHER", () => escolherPowerup(p.id), true);
+
+  ctx.restore();
+}
+
+function desenharPainelCentral(w, h) {
+  const x = canvas.width / 2 - w / 2;
+  const y = canvas.height / 2 - h / 2;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(5,8,16,0.88)";
+  arredondarRetangulo(x, y, w, h, 24, true, false);
+  ctx.strokeStyle = "rgba(114,236,255,0.55)";
+  ctx.lineWidth = 2;
+  arredondarRetangulo(x, y, w, h, 24, false, true);
+  ctx.restore();
+}
+
+function desenharBotao(x, y, w, h, texto, acao, destaque = false) {
+  botoes.push({x, y, w, h, acao});
+
+  ctx.save();
+
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  if (destaque) {
+    grad.addColorStop(0, "#35d9ff");
+    grad.addColorStop(1, "#1767ff");
+  } else {
+    grad.addColorStop(0, "#353b4d");
+    grad.addColorStop(1, "#171b29");
+  }
+
+  ctx.fillStyle = grad;
+  arredondarRetangulo(x, y, w, h, 14, true, false);
+
+  ctx.strokeStyle = destaque ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 2;
+  arredondarRetangulo(x, y, w, h, 14, false, true);
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 18px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(texto, x + w / 2, y + h / 2);
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.restore();
+}
+
+// =====================================================
+// UTILIDADES DE DESENHO
+// =====================================================
+function arredondarRetangulo(x, y, w, h, r, fill, stroke) {
+  r = Math.min(r, w / 2, h / 2);
+
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+function desenharCoracao(x, y, s) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 0.35);
+  ctx.bezierCurveTo(x, y, x - s * 0.55, y, x - s * 0.55, y + s * 0.35);
+  ctx.bezierCurveTo(x - s * 0.55, y + s * 0.7, x, y + s, x, y + s * 1.18);
+  ctx.bezierCurveTo(x, y + s, x + s * 0.55, y + s * 0.7, x + s * 0.55, y + s * 0.35);
+  ctx.bezierCurveTo(x + s * 0.55, y, x, y, x, y + s * 0.35);
+  ctx.fill();
+}
+
+function quebrarTexto(texto, x, y, maxWidth, lineHeight) {
+  const palavras = texto.split(" ");
+  let linha = "";
+
+  for (let n = 0; n < palavras.length; n++) {
+    const teste = linha + palavras[n] + " ";
+    const largura = ctx.measureText(teste).width;
+
+    if (largura > maxWidth && n > 0) {
+      ctx.fillText(linha, x + maxWidth / 2, y);
+      linha = palavras[n] + " ";
+      y += lineHeight;
+    } else {
+      linha = teste;
+    }
+  }
+
+  ctx.fillText(linha, x + maxWidth / 2, y);
+}
+
+function colidiu(a, b) {
+  return (
+    a.x < b.x + b.largura &&
+    a.x + a.largura > b.x &&
+    a.y < b.y + b.altura &&
+    a.y + a.altura > b.y
+  );
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function embaralhar(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+function loop(t) {
+  const dt = Math.min((t - ultimoTempo) / 1000, 0.033);
+  ultimoTempo = t;
+
+  atualizar(dt);
+  desenhar();
+
+  requestAnimationFrame(loop);
+}
+
+reiniciarTudo();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
